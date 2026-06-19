@@ -1,5 +1,6 @@
 import localforage from 'localforage';
 import type { DriftBottle, MemoryPalace, EmotionType, MemoryScene, MemoryNode } from '@/types';
+import { detectSensitiveContent, type ContentSafetyResult } from './contentSafety';
 
 const ANONYMOUS_NAMES = [
   '来自海边的朋友',
@@ -83,21 +84,45 @@ function generateMockMessage(): string {
 
 export async function getRandomBottle(): Promise<DriftBottle> {
   await delay(800 + Math.random() * 700);
+  let bottle: DriftBottle;
   const saved = await localforage.getItem<DriftBottle[]>('drift-bottles-received');
   if (saved && saved.length > 0 && Math.random() > 0.3) {
-    const bottle = { ...randomChoice(saved), isCollected: false };
-    return rehydrateBottle(bottle);
+    bottle = { ...randomChoice(saved), isCollected: false };
+  } else {
+    bottle = generateMockBottle();
   }
-  return generateMockBottle();
+
+  if (bottle.content) {
+    const safetyResult = detectSensitiveContent(bottle.content, bottle.emotion);
+    bottle.contentSafetyStatus = safetyResult.status;
+    bottle.contentSafetyMessage = safetyResult.message;
+  } else {
+    bottle.contentSafetyStatus = 'safe';
+  }
+  bottle.isContentRevealed = false;
+
+  return rehydrateBottle(bottle);
 }
 
 export async function sendBottle(
   voiceBlob: Blob,
   duration: number,
   emotion?: EmotionType,
-  content?: string
+  content?: string,
+  forceSend: boolean = false
 ): Promise<DriftBottle> {
   await delay(1000);
+
+  let safetyResult: ContentSafetyResult | null = null;
+  if (content) {
+    safetyResult = detectSensitiveContent(content, emotion);
+  }
+
+  if (!forceSend && safetyResult?.status === 'sensitive') {
+    const error = new Error('CONTENT_SENSITIVE');
+    (error as any).safetyResult = safetyResult;
+    throw error;
+  }
 
   const id = randomId();
   const blobRef = await saveAudioBlob(id, voiceBlob);
@@ -111,10 +136,24 @@ export async function sendBottle(
     emotion,
     isSentByMe: true,
     content,
+    contentSafetyStatus: safetyResult?.status || 'safe',
+    contentSafetyMessage: safetyResult?.message,
   };
 
   const sent = await localforage.getItem<DriftBottle[]>('drift-bottles-sent');
   await localforage.setItem('drift-bottles-sent', [...(sent || []), bottle]);
+
+  if (safetyResult?.status !== 'sensitive') {
+    const received = await localforage.getItem<DriftBottle[]>('drift-bottles-received');
+    const poolBottle = {
+      ...bottle,
+      fromAnonymous: randomChoice(ANONYMOUS_NAMES),
+      isSentByMe: false,
+      isCollected: false,
+    };
+    await localforage.setItem('drift-bottles-received', [...(received || []), poolBottle]);
+  }
+
   return bottle;
 }
 
@@ -135,7 +174,11 @@ export async function getMyBottles(): Promise<DriftBottle[]> {
     'drift-bottles-sent'
   )) as DriftBottle[];
 
-  const all = [...(received || []), ...(sent || [])].sort(
+  const filteredReceived = (received || []).filter(
+    (b) => b.contentSafetyStatus !== 'sensitive' || b.isContentRevealed
+  );
+
+  const all = [...filteredReceived, ...(sent || [])].sort(
     (a, b) => b.createdAt - a.createdAt
   );
 
@@ -143,6 +186,10 @@ export async function getMyBottles(): Promise<DriftBottle[]> {
 }
 
 export async function collectBottle(bottle: DriftBottle): Promise<void> {
+  if (bottle.contentSafetyStatus === 'sensitive' && !bottle.isContentRevealed) {
+    return;
+  }
+
   const toStore = { ...bottle, isCollected: true };
   if (toStore.voiceBlobUrl && !toStore.voiceBlobUrl.startsWith('blob:')) {
     toStore.voiceBlobUrl = `blob:${bottle.id}`;
@@ -153,6 +200,19 @@ export async function collectBottle(bottle: DriftBottle): Promise<void> {
   )) as DriftBottle[];
   const toSave = [...(received || []), toStore];
   await localforage.setItem('drift-bottles-received', toSave);
+}
+
+export async function revealBottleContent(bottleId: string): Promise<void> {
+  const received = (await localforage.getItem<DriftBottle[]>(
+    'drift-bottles-received'
+  )) as DriftBottle[];
+
+  if (received) {
+    const updated = received.map((b) =>
+      b.id === bottleId ? { ...b, isContentRevealed: true } : b
+    );
+    await localforage.setItem('drift-bottles-received', updated);
+  }
 }
 
 export async function generateMemorySceneFromDescription(

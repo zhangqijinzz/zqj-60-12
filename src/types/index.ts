@@ -8,6 +8,8 @@ export type ThemeMode = 'aurora' | 'ocean' | 'forest' | 'sunset';
 
 export type EmotionType = 'warm' | 'miss' | 'encourage' | 'peaceful';
 
+export type ContentSafetyStatus = 'safe' | 'sensitive' | 'unavailable';
+
 export interface DriftBottle {
   id: string;
   voiceBlobUrl: string;
@@ -18,6 +20,9 @@ export interface DriftBottle {
   isSentByMe?: boolean;
   isCollected?: boolean;
   content?: string;
+  contentSafetyStatus?: ContentSafetyStatus;
+  contentSafetyMessage?: string;
+  isContentRevealed?: boolean;
 }
 
 export interface MemoryNode {

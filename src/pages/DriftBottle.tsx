@@ -17,12 +17,17 @@ import {
   Check,
   Flower2,
   Leaf,
+  AlertTriangle,
+  Eye,
+  EyeOff,
+  ShieldAlert,
 } from 'lucide-react';
 import { VoiceRecorder } from '@/components/common/VoiceRecorder';
 import { GazeButton } from '@/components/common/GazeButton';
 import { cn } from '@/lib/utils';
 import type { DriftBottle, EmotionType } from '@/types';
-import { getRandomBottle, sendBottle, getMyBottles, collectBottle } from '@/utils/mockApi';
+import { getRandomBottle, sendBottle, getMyBottles, collectBottle, revealBottleContent } from '@/utils/mockApi';
+import { isSensitiveContentError, type ContentSafetyResult } from '@/utils/contentSafety';
 
 type TabType = 'ocean' | 'throw' | 'beach';
 
@@ -201,12 +206,14 @@ function BottleModal({
   onWarm,
   onResonate,
   onDrift,
+  onRevealContent,
 }: {
   bottle: DriftBottle | null;
   onClose: () => void;
   onWarm: () => void;
   onResonate: () => void;
   onDrift: () => void;
+  onRevealContent: () => void;
 }) {
   const [audioPlaying, setAudioPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -235,6 +242,10 @@ function BottleModal({
   const emotion = bottle?.emotion ? EMOTION_CONFIG[bottle.emotion] : null;
   const dateStr = bottle ? new Date(bottle.createdAt).toLocaleDateString('zh-CN') : '';
   const duration = bottle ? `${Math.floor(bottle.duration / 60)}分${bottle.duration % 60}秒` : '';
+
+  const isSensitiveHidden =
+    bottle?.contentSafetyStatus === 'sensitive' && !bottle.isContentRevealed && !bottle.isSentByMe;
+  const isUnavailable = bottle?.contentSafetyStatus === 'unavailable';
 
   return (
     <AnimatePresence>
@@ -291,7 +302,19 @@ function BottleModal({
                   )}
                 </div>
 
-                {bottle.voiceBlobUrl && (
+                {isUnavailable && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.1 }}
+                    className="mb-6 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-2"
+                  >
+                    <ShieldAlert className="w-4 h-4 text-amber-400" />
+                    <span className="text-amber-300 text-sm">内容未经审核</span>
+                  </motion.div>
+                )}
+
+                {bottle.voiceBlobUrl && !isSensitiveHidden && (
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -339,48 +362,94 @@ function BottleModal({
                   </motion.div>
                 )}
 
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2 }}
-                  className="mb-8 p-5 rounded-2xl bg-gradient-to-br from-white/5 to-white/0 border border-white/5"
-                >
-                  <p className="text-white/80 text-base leading-relaxed whitespace-pre-wrap">
-                    {bottle.content}
-                  </p>
-                </motion.div>
+                <AnimatePresence mode="wait">
+                  {isSensitiveHidden ? (
+                    <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ delay: 0.2 }}
+                    className="mb-6 p-6 rounded-2xl bg-gradient-to-br from-rose-500/10 to-orange-500/10 border border-rose-500/20"
+                  >
+                    <div className="flex flex-col items-center text-center">
+                      <div className="w-16 h-16 rounded-full bg-rose-500/20 flex items-center justify-center mb-4">
+                        <EyeOff className="w-8 h-8 text-rose-400" />
+                      </div>
+                      <p className="text-white/80 text-lg font-medium mb-2">
+                        {bottle.contentSafetyMessage || '这只瓶子装着难以辨识的回声'}
+                      </p>
+                      <p className="text-white/40 text-sm mb-5">
+                        内容可能包含不适合分享的信息
+                      </p>
+                      <div className="flex gap-3 w-full">
+                        <GazeButton
+                          variant="ghost"
+                          className="flex-1 !min-h-[44px] !px-4"
+                          icon={<Eye className="w-4 h-4" />}
+                          onActivate={onRevealContent}
+                        >
+                          仍然查看
+                        </GazeButton>
+                        <GazeButton
+                          variant="primary"
+                          className="flex-1 !min-h-[44px] !px-4"
+                          icon={<Anchor className="w-4 h-4" />}
+                          onActivate={onDrift}
+                        >
+                          让它漂流
+                        </GazeButton>
+                      </div>
+                    </div>
+                  </motion.div>
+                  ) : (
+                    <motion.div
+                      key="content"
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      transition={{ delay: 0.2 }}
+                      className="mb-8 p-5 rounded-2xl bg-gradient-to-br from-white/5 to-white/0 border border-white/5"
+                    >
+                      <p className="text-white/80 text-base leading-relaxed whitespace-pre-wrap">
+                        {bottle.content}
+                      </p>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.3 }}
-                  className="grid grid-cols-3 gap-3"
-                >
-                  <GazeButton
-                    variant="glow"
-                    className="!min-h-[70px] !px-4 !py-3 flex-col !gap-1"
-                    icon={<Heart className="w-5 h-5" />}
-                    onActivate={onWarm}
+                {!isSensitiveHidden && !bottle.isSentByMe && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.3 }}
+                    className="grid grid-cols-3 gap-3"
                   >
-                    <span className="text-sm">温暖</span>
-                  </GazeButton>
-                  <GazeButton
-                    variant="primary"
-                    className="!min-h-[70px] !px-4 !py-3 flex-col !gap-1"
-                    icon={<Sparkles className="w-5 h-5" />}
-                    onActivate={onResonate}
-                  >
-                    <span className="text-sm">共鸣</span>
-                  </GazeButton>
-                  <GazeButton
-                    variant="ghost"
-                    className="!min-h-[70px] !px-4 !py-3 flex-col !gap-1"
-                    icon={<Anchor className="w-5 h-5" />}
-                    onActivate={onDrift}
-                  >
-                    <span className="text-sm">漂流</span>
-                  </GazeButton>
-                </motion.div>
+                    <GazeButton
+                      variant="glow"
+                      className="!min-h-[70px] !px-4 !py-3 flex-col !gap-1"
+                      icon={<Heart className="w-5 h-5" />}
+                      onActivate={onWarm}
+                    >
+                      <span className="text-sm">温暖</span>
+                    </GazeButton>
+                    <GazeButton
+                      variant="primary"
+                      className="!min-h-[70px] !px-4 !py-3 flex-col !gap-1"
+                      icon={<Sparkles className="w-5 h-5" />}
+                      onActivate={onResonate}
+                    >
+                      <span className="text-sm">共鸣</span>
+                    </GazeButton>
+                    <GazeButton
+                      variant="ghost"
+                      className="!min-h-[70px] !px-4 !py-3 flex-col !gap-1"
+                      icon={<Anchor className="w-5 h-5" />}
+                      onActivate={onDrift}
+                    >
+                      <span className="text-sm">漂流</span>
+                    </GazeButton>
+                  </motion.div>
+                )}
               </div>
             </div>
           </motion.div>
@@ -415,6 +484,73 @@ function Toast({ message, type }: { message: string; type?: 'success' | 'info' }
   );
 }
 
+function SensitiveContentDialog({
+  show,
+  onConfirm,
+  onCancel,
+}: {
+  show: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <AnimatePresence>
+      {show && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/70 backdrop-blur-md"
+        >
+          <motion.div
+            initial={{ scale: 0.8, opacity: 0, y: 40 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.8, opacity: 0, y: 40 }}
+            transition={{ type: 'spring', damping: 20 }}
+            className="relative w-full max-w-md"
+          >
+            <div className="absolute -inset-1 rounded-3xl bg-gradient-to-br from-rose-400/30 via-orange-400/20 to-amber-400/30 blur-xl" />
+
+            <div className="relative rounded-3xl bg-gradient-to-br from-[#1a1a2e]/95 via-[#16213e]/95 to-[#0f3460]/95 border border-white/15 backdrop-blur-xl p-8 shadow-2xl overflow-hidden">
+              <div className="absolute top-0 left-0 w-64 h-64 bg-rose-500/10 rounded-full -translate-x-32 -translate-y-32 blur-3xl" />
+              <div className="absolute bottom-0 right-0 w-64 h-64 bg-orange-500/10 rounded-full translate-x-32 translate-y-32 blur-3xl" />
+
+              <div className="relative z-10">
+                <div className="flex flex-col items-center text-center mb-8">
+                  <div className="w-20 h-20 rounded-full bg-gradient-to-br from-rose-500/20 to-orange-500/20 border border-rose-400/30 flex items-center justify-center mb-6">
+                    <AlertTriangle className="w-10 h-10 text-rose-400" />
+                  </div>
+                  <h3 className="text-xl font-bold text-white/90 mb-3">
+                    你的话语中可能包含不适合分享的内容
+                  </h3>
+                  <p className="text-white/50 text-sm leading-relaxed">
+                    部分内容可能会让他人感到不适。你可以选择修改后重新发送，或确认继续分享。
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={onCancel}
+                    className="flex-1 px-6 py-3.5 rounded-xl bg-white/5 border border-white/10 text-white/70 font-medium hover:bg-white/10 transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={onConfirm}
+                    className="flex-1 px-6 py-3.5 rounded-xl bg-gradient-to-r from-rose-500/30 to-orange-500/30 border border-rose-400/40 text-rose-200 font-medium hover:from-rose-500/40 hover:to-orange-500/40 transition-colors"
+                  >
+                    继续发送
+                  </button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 export default function DriftBottlePage() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabType>('ocean');
@@ -425,6 +561,13 @@ export default function DriftBottlePage() {
   const [throwAnimation, setThrowAnimation] = useState(false);
   const [toast, setToast] = useState<{ message: string; type?: 'success' | 'info' } | null>(null);
   const [selectedEmotion, setSelectedEmotion] = useState<EmotionType>('warm');
+  const [sensitiveDialog, setSensitiveDialog] = useState<{
+    show: boolean;
+    blob: Blob | null;
+    duration: number;
+    transcript: string;
+    safetyResult: ContentSafetyResult | null;
+  }>({ show: false, blob: null, duration: 0, transcript: '', safetyResult: null });
 
   const gazeTimerRef = useRef<Record<string, number | null>>({});
   const gazeRafRef = useRef<Record<string, number | null>>({});
@@ -586,7 +729,40 @@ export default function DriftBottlePage() {
   const handleRecordingComplete = async (blob: Blob, duration: number, transcript?: string) => {
     setThrowAnimation(true);
     try {
-      await sendBottle(blob, duration, selectedEmotion, transcript || undefined);
+      await sendBottle(blob, duration, selectedEmotion, transcript || undefined, false);
+      setTimeout(() => {
+        setThrowAnimation(false);
+        showToast('瓶子已投入大海 🌊', 'success');
+      }, 2000);
+    } catch (error) {
+      setThrowAnimation(false);
+      if (isSensitiveContentError(error) && transcript) {
+        const safetyResult = (error as any).safetyResult as ContentSafetyResult;
+        setSensitiveDialog({
+          show: true,
+          blob,
+          duration,
+          transcript,
+          safetyResult,
+        });
+      } else {
+        showToast('发送失败，请重试', 'info');
+      }
+    }
+  };
+
+  const handleConfirmSendSensitive = async () => {
+    if (!sensitiveDialog.blob) return;
+    setThrowAnimation(true);
+    setSensitiveDialog({ show: false, blob: null, duration: 0, transcript: '', safetyResult: null });
+    try {
+      await sendBottle(
+        sensitiveDialog.blob,
+        sensitiveDialog.duration,
+        selectedEmotion,
+        sensitiveDialog.transcript,
+        true
+      );
       setTimeout(() => {
         setThrowAnimation(false);
         showToast('瓶子已投入大海 🌊', 'success');
@@ -596,6 +772,16 @@ export default function DriftBottlePage() {
       showToast('发送失败，请重试', 'info');
     }
   };
+
+  const handleCancelSendSensitive = () => {
+    setSensitiveDialog({ show: false, blob: null, duration: 0, transcript: '', safetyResult: null });
+  };
+
+  const handleRevealContent = useCallback(async () => {
+    if (!selectedBottle) return;
+    await revealBottleContent(selectedBottle.id);
+    setSelectedBottle({ ...selectedBottle, isContentRevealed: true });
+  }, [selectedBottle]);
 
   const TABS = useMemo(
     () => [
@@ -613,6 +799,12 @@ export default function DriftBottlePage() {
       <AnimatePresence>
         {toast && <Toast message={toast.message} type={toast.type} />}
       </AnimatePresence>
+
+      <SensitiveContentDialog
+        show={sensitiveDialog.show}
+        onConfirm={handleConfirmSendSensitive}
+        onCancel={handleCancelSendSensitive}
+      />
 
       <div className="relative z-10 flex flex-col min-h-screen">
         <div className="flex items-center justify-between px-6 pt-6 pb-4">
@@ -1136,13 +1328,19 @@ export default function DriftBottlePage() {
                         minute: '2-digit',
                       });
 
+                      const isBeachSensitiveHidden =
+                        bottle.contentSafetyStatus === 'sensitive' &&
+                        !bottle.isContentRevealed &&
+                        !bottle.isSentByMe;
+
                       return (
                         <motion.div
                           key={bottle.id}
                           initial={{ opacity: 0, y: 30 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ delay: index * 0.08, type: 'spring' }}
-                          className="group relative"
+                          className="group relative cursor-pointer"
+                          onClick={() => setSelectedBottle(bottle)}
                         >
                           <div
                             className="absolute -inset-0.5 rounded-2xl blur-lg opacity-60 group-hover:opacity-100 transition-opacity"
@@ -1153,7 +1351,7 @@ export default function DriftBottlePage() {
                             }}
                           />
 
-                          <div className="relative rounded-2xl bg-gradient-to-br from-[#1a2847]/90 to-[#0f1a3d]/90 border border-white/10 backdrop-blur-sm p-5 overflow-hidden">
+                          <div className="relative rounded-2xl bg-gradient-to-br from-[#1a2847]/90 to-[#0f1a3d]/90 border border-white/10 backdrop-blur-sm p-5 overflow-hidden hover:border-white/20 transition-colors">
                             <div
                               className="absolute -top-10 -right-10 w-32 h-32 rounded-full blur-3xl"
                               style={{
@@ -1192,7 +1390,7 @@ export default function DriftBottlePage() {
                                   </div>
                                 </div>
 
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
                                   {emotion && (
                                     <span
                                       className={cn(
@@ -1214,13 +1412,28 @@ export default function DriftBottlePage() {
                                       已收藏
                                     </span>
                                   )}
+                                  {bottle.contentSafetyStatus === 'unavailable' && (
+                                    <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20 flex items-center gap-1">
+                                      <ShieldAlert className="w-3 h-3" />
+                                      内容未经审核
+                                    </span>
+                                  )}
                                 </div>
                               </div>
 
-                              {bottle.content && (
-                                <p className="text-white/70 text-sm leading-relaxed line-clamp-3 mb-4">
-                                  {bottle.content}
-                                </p>
+                              {isBeachSensitiveHidden ? (
+                                <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                                  <EyeOff className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                                  <p className="text-rose-300 text-sm">
+                                    {bottle.contentSafetyMessage || '这只瓶子装着难以辨识的回声'}
+                                  </p>
+                                </div>
+                              ) : (
+                                bottle.content && (
+                                  <p className="text-white/70 text-sm leading-relaxed line-clamp-3 mb-4">
+                                    {bottle.content}
+                                  </p>
+                                )
                               )}
 
                               <div className="flex items-center gap-4 text-white/40 text-xs pt-3 border-t border-white/5">
@@ -1258,6 +1471,7 @@ export default function DriftBottlePage() {
         onWarm={handleWarm}
         onResonate={handleResonate}
         onDrift={handleDrift}
+        onRevealContent={handleRevealContent}
       />
     </div>
   );
