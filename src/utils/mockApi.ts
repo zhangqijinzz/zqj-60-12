@@ -87,19 +87,28 @@ export async function getRandomBottle(): Promise<DriftBottle> {
   let bottle: DriftBottle;
   const saved = await localforage.getItem<DriftBottle[]>('drift-bottles-received');
   if (saved && saved.length > 0 && Math.random() > 0.3) {
-    bottle = { ...randomChoice(saved), isCollected: false };
+    const stored = randomChoice(saved);
+    bottle = { ...stored, isCollected: false };
+    if (!bottle.contentSafetyStatus) {
+      if (bottle.content) {
+        const safetyResult = detectSensitiveContent(bottle.content, bottle.emotion);
+        bottle.contentSafetyStatus = safetyResult.status;
+        bottle.contentSafetyMessage = safetyResult.message;
+      } else {
+        bottle.contentSafetyStatus = 'safe';
+      }
+    }
   } else {
     bottle = generateMockBottle();
+    if (bottle.content) {
+      const safetyResult = detectSensitiveContent(bottle.content, bottle.emotion);
+      bottle.contentSafetyStatus = safetyResult.status;
+      bottle.contentSafetyMessage = safetyResult.message;
+    } else {
+      bottle.contentSafetyStatus = 'safe';
+    }
+    bottle.isContentRevealed = false;
   }
-
-  if (bottle.content) {
-    const safetyResult = detectSensitiveContent(bottle.content, bottle.emotion);
-    bottle.contentSafetyStatus = safetyResult.status;
-    bottle.contentSafetyMessage = safetyResult.message;
-  } else {
-    bottle.contentSafetyStatus = 'safe';
-  }
-  bottle.isContentRevealed = false;
 
   return rehydrateBottle(bottle);
 }
@@ -109,12 +118,15 @@ export async function sendBottle(
   duration: number,
   emotion?: EmotionType,
   content?: string,
-  forceSend: boolean = false
+  forceSend: boolean = false,
+  precomputedSafetyResult?: ContentSafetyResult | null
 ): Promise<DriftBottle> {
   await delay(1000);
 
   let safetyResult: ContentSafetyResult | null = null;
-  if (content) {
+  if (precomputedSafetyResult !== undefined) {
+    safetyResult = precomputedSafetyResult;
+  } else if (content) {
     safetyResult = detectSensitiveContent(content, emotion);
   }
 
@@ -143,13 +155,15 @@ export async function sendBottle(
   const sent = await localforage.getItem<DriftBottle[]>('drift-bottles-sent');
   await localforage.setItem('drift-bottles-sent', [...(sent || []), bottle]);
 
-  if (safetyResult?.status !== 'sensitive') {
+  if (!forceSend && safetyResult?.status === 'sensitive') {
+  } else {
     const received = await localforage.getItem<DriftBottle[]>('drift-bottles-received');
     const poolBottle = {
       ...bottle,
       fromAnonymous: randomChoice(ANONYMOUS_NAMES),
       isSentByMe: false,
       isCollected: false,
+      isContentRevealed: false,
     };
     await localforage.setItem('drift-bottles-received', [...(received || []), poolBottle]);
   }

@@ -568,6 +568,11 @@ export default function DriftBottlePage() {
     transcript: string;
     safetyResult: ContentSafetyResult | null;
   }>({ show: false, blob: null, duration: 0, transcript: '', safetyResult: null });
+  const [recordingDraft, setRecordingDraft] = useState<{
+    blob: Blob;
+    duration: number;
+    transcript: string;
+  } | null>(null);
 
   const gazeTimerRef = useRef<Record<string, number | null>>({});
   const gazeRafRef = useRef<Record<string, number | null>>({});
@@ -753,15 +758,18 @@ export default function DriftBottlePage() {
 
   const handleConfirmSendSensitive = async () => {
     if (!sensitiveDialog.blob) return;
+    const { blob, duration, transcript, safetyResult } = sensitiveDialog;
     setThrowAnimation(true);
     setSensitiveDialog({ show: false, blob: null, duration: 0, transcript: '', safetyResult: null });
+    setRecordingDraft(null);
     try {
       await sendBottle(
-        sensitiveDialog.blob,
-        sensitiveDialog.duration,
+        blob,
+        duration,
         selectedEmotion,
-        sensitiveDialog.transcript,
-        true
+        transcript,
+        true,
+        safetyResult
       );
       setTimeout(() => {
         setThrowAnimation(false);
@@ -774,7 +782,48 @@ export default function DriftBottlePage() {
   };
 
   const handleCancelSendSensitive = () => {
+    const { blob, duration, transcript } = sensitiveDialog;
     setSensitiveDialog({ show: false, blob: null, duration: 0, transcript: '', safetyResult: null });
+    if (blob && transcript) {
+      setRecordingDraft({ blob, duration, transcript });
+    }
+  };
+
+  const handleRetrySendDraft = async () => {
+    if (!recordingDraft) return;
+    setThrowAnimation(true);
+    try {
+      await sendBottle(
+        recordingDraft.blob,
+        recordingDraft.duration,
+        selectedEmotion,
+        recordingDraft.transcript,
+        false
+      );
+      setRecordingDraft(null);
+      setTimeout(() => {
+        setThrowAnimation(false);
+        showToast('瓶子已投入大海 🌊', 'success');
+      }, 2000);
+    } catch (error) {
+      setThrowAnimation(false);
+      if (isSensitiveContentError(error)) {
+        const safetyResult = (error as any).safetyResult as ContentSafetyResult;
+        setSensitiveDialog({
+          show: true,
+          blob: recordingDraft.blob,
+          duration: recordingDraft.duration,
+          transcript: recordingDraft.transcript,
+          safetyResult,
+        });
+      } else {
+        showToast('发送失败，请重试', 'info');
+      }
+    }
+  };
+
+  const handleDiscardDraft = () => {
+    setRecordingDraft(null);
   };
 
   const handleRevealContent = useCallback(async () => {
@@ -1221,59 +1270,118 @@ export default function DriftBottlePage() {
                         </div>
                       </motion.div>
 
-                      <div className="relative w-48 h-48 mb-4 flex items-center justify-center">
+                      {recordingDraft ? (
                         <motion.div
-                          animate={{
-                            scale: [1, 1.1, 1],
-                            opacity: [0.5, 0.8, 0.5],
-                          }}
-                          transition={{
-                            duration: 4,
-                            repeat: Infinity,
-                            ease: 'easeInOut',
-                          }}
-                          className="absolute inset-0 rounded-full"
-                          style={{
-                            background:
-                              'radial-gradient(circle, rgba(34,211,238,0.2) 0%, rgba(167,139,250,0.1) 40%, transparent 70%)',
-                          }}
-                        />
-                        <motion.div
-                          animate={{ rotate: [0, 3, -3, 0], y: [0, -5, 0] }}
-                          transition={{
-                            duration: 5,
-                            repeat: Infinity,
-                            ease: 'easeInOut',
-                          }}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="w-full max-w-md space-y-5"
                         >
-                          <svg viewBox="0 0 64 96" className="w-28 h-40 drop-shadow-[0_0_30px_rgba(34,211,238,0.4)]">
-                            <defs>
-                              <linearGradient id="tbGlass" x1="0%" y1="0%" x2="100%" y2="100%">
-                                <stop offset="0%" stopColor="rgba(255,255,255,0.35)" />
-                                <stop offset="50%" stopColor="rgba(180,230,255,0.2)" />
-                                <stop offset="100%" stopColor="rgba(140,200,255,0.3)" />
-                              </linearGradient>
-                            </defs>
-                            <path
-                              d="M26 4 Q28 2 32 2 Q36 2 38 4 L38 16 Q34 18 32 18 Q30 18 26 16 Z"
-                              fill="url(#tbGlass)"
-                              stroke="rgba(180,220,255,0.6)"
-                              strokeWidth="1.5"
-                            />
-                            <path
-                              d="M24 16 L24 22 Q16 26 16 38 L16 80 Q16 92 32 92 Q48 92 48 80 L48 38 Q48 26 40 22 L40 16 Q36 18 32 18 Q28 18 24 16 Z"
-                              fill="url(#tbGlass)"
-                              stroke="rgba(180,220,255,0.6)"
-                              strokeWidth="1.5"
-                            />
-                          </svg>
-                        </motion.div>
-                      </div>
+                          <div className="p-5 rounded-2xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-amber-500/20">
+                            <div className="flex items-center gap-2 mb-4">
+                              <AlertTriangle className="w-4 h-4 text-amber-400" />
+                              <p className="text-amber-300 text-sm font-medium">
+                                以下是你刚才录制的内容，可修改后重新发送
+                              </p>
+                            </div>
 
-                      <VoiceRecorder
-                        onRecordingComplete={handleRecordingComplete}
-                        maxDuration={180}
-                      />
+                            <div className="space-y-4">
+                              <div>
+                                <p className="text-white/50 text-xs mb-2">语音时长</p>
+                                <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/5 border border-white/10">
+                                  <Clock className="w-4 h-4 text-white/60" />
+                                  <span className="text-white/80 font-mono">
+                                    {Math.floor(recordingDraft.duration / 60)}分{Math.floor(recordingDraft.duration % 60)}秒
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div>
+                                <p className="text-white/50 text-xs mb-2">语音转写内容</p>
+                                <div className="px-4 py-3 rounded-xl bg-white/5 border border-white/10">
+                                  <p className="text-white/80 text-sm leading-relaxed whitespace-pre-wrap">
+                                    {recordingDraft.transcript}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <GazeButton
+                              variant="ghost"
+                              className="!min-h-[52px] !px-4"
+                              icon={<X className="w-4 h-4" />}
+                              onActivate={handleDiscardDraft}
+                            >
+                              重新录制
+                            </GazeButton>
+                            <GazeButton
+                              variant="primary"
+                              className="!min-h-[52px] !px-4"
+                              icon={<Send className="w-4 h-4" />}
+                              onActivate={handleRetrySendDraft}
+                            >
+                              再次发送
+                            </GazeButton>
+                          </div>
+                        </motion.div>
+                      ) : (
+                        <>
+                          <div className="relative w-48 h-48 mb-4 flex items-center justify-center">
+                            <motion.div
+                              animate={{
+                                scale: [1, 1.1, 1],
+                                opacity: [0.5, 0.8, 0.5],
+                              }}
+                              transition={{
+                                duration: 4,
+                                repeat: Infinity,
+                                ease: 'easeInOut',
+                              }}
+                              className="absolute inset-0 rounded-full"
+                              style={{
+                                background:
+                                  'radial-gradient(circle, rgba(34,211,238,0.2) 0%, rgba(167,139,250,0.1) 40%, transparent 70%)',
+                              }}
+                            />
+                            <motion.div
+                              animate={{ rotate: [0, 3, -3, 0], y: [0, -5, 0] }}
+                              transition={{
+                                duration: 5,
+                                repeat: Infinity,
+                                ease: 'easeInOut',
+                              }}
+                            >
+                              <svg viewBox="0 0 64 96" className="w-28 h-40 drop-shadow-[0_0_30px_rgba(34,211,238,0.4)]">
+                                <defs>
+                                  <linearGradient id="tbGlass" x1="0%" y1="0%" x2="100%" y2="100%">
+                                    <stop offset="0%" stopColor="rgba(255,255,255,0.35)" />
+                                    <stop offset="50%" stopColor="rgba(180,230,255,0.2)" />
+                                    <stop offset="100%" stopColor="rgba(140,200,255,0.3)" />
+                                  </linearGradient>
+                                </defs>
+                                <path
+                                  d="M26 4 Q28 2 32 2 Q36 2 38 4 L38 16 Q34 18 32 18 Q30 18 26 16 Z"
+                                  fill="url(#tbGlass)"
+                                  stroke="rgba(180,220,255,0.6)"
+                                  strokeWidth="1.5"
+                                />
+                                <path
+                                  d="M24 16 L24 22 Q16 26 16 38 L16 80 Q16 92 32 92 Q48 92 48 80 L48 38 Q48 26 40 22 L40 16 Q36 18 32 18 Q28 18 24 16 Z"
+                                  fill="url(#tbGlass)"
+                                  stroke="rgba(180,220,255,0.6)"
+                                  strokeWidth="1.5"
+                                />
+                              </svg>
+                            </motion.div>
+                          </div>
+
+                          <VoiceRecorder
+                            onRecordingComplete={handleRecordingComplete}
+                            maxDuration={180}
+                          />
+                        </>
+                      )}
                     </motion.div>
                   )}
                 </AnimatePresence>
